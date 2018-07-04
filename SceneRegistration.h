@@ -11,6 +11,7 @@
 
 class SceneRegistration {
 public:
+	static std::vector<std::vector<float> > getDepth(RealsenseGrabber* grabber);
 	static Transformation align(RealsenseGrabber* grabber, Transformation* colorTrans);
 };
 
