@@ -3,6 +3,7 @@
 #include "Parameters.h"
 
 std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* grabber) {
+	puts("!!!");
 	const cv::Size BOARD_SIZE = cv::Size(9, 6);
 	const int BOARD_NUM = BOARD_SIZE.width * BOARD_SIZE.height;
 	const float GRID_SIZE = 0.028f;
@@ -16,6 +17,7 @@ std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* g
 		}
 	}
 
+	Transformation* depthTrans;
 	Intrinsics* depthIntrinsics;
 	Intrinsics* colorIntrinsics;
 	UINT16** depthImages;
@@ -24,10 +26,11 @@ std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* g
 	cv::Mat sourceColorMat(COLOR_H, COLOR_W, CV_8UC3);
 
 	std::vector<std::vector<float> > depths;
-
+	int cameras = grabber->getRGBD(depthImages, colorImages, depthTrans, depthIntrinsics, colorIntrinsics);
 	for (int id = 0; id < cameras; id++) {
-		for (int iter = -1; iter < ITERATION;) {
-			cameras = grabber->getRGBD(depthImages, colorImages, depthTrans, depthIntrinsics, colorIntrinsics);
+		std::vector<std::vector<cv::Point2f> > sourcePointsArray;
+		for (int iter = 0; iter < ITERATION;) {
+			
 			RGBQUAD* source = colorImages[id];
 			for (int i = 0; i < COLOR_H; i++) {
 				for (int j = 0; j < COLOR_W; j++) {
@@ -37,15 +40,11 @@ std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* g
 				}
 			}
 			sourcePoints.clear();
-			findChessboardCorners(sourceColorMat, BOARD_SIZE, sourcePoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FAST_CHECK | cv::CALIB_CB_NORMALIZE_IMAGE);
+			findChessboardCorners(sourceColorMat, BOARD_SIZE, sourcePoints, cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
 
 			cv::Scalar color = cv::Scalar(0, 0, 255);
 			if (sourcePoints.size() == BOARD_NUM) {
-				if (timer.getTime() > INTERVAL) {
-					color = cv::Scalar(0, 255, 0);
-				} else {
-					color = cv::Scalar(0, 255, 255);
-				}
+				color = cv::Scalar(0, 255, 255);
 			}
 			for (int i = 0; i < sourcePoints.size(); i++) {
 				cv::circle(sourceColorMat, sourcePoints[i], 3, color, 2);
@@ -57,10 +56,9 @@ std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* g
 				iter = 0;
 			}
 
-			if (iter != -1 && sourcePoints.size() == BOARD_NUM && timer.getTime() > INTERVAL) {
+			if (iter != -1 && sourcePoints.size() == BOARD_NUM) {
 				iter++;
 				sourcePointsArray.push_back(sourcePoints);
-				timer.reset();
 			}
 		}
 
@@ -69,46 +67,58 @@ std::vector<std::vector<float> > SceneRegistration::getDepth(RealsenseGrabber* g
 			objectPointsArray.push_back(objectPoints);
 		}
 
-		Mat cameraMatrix, distCoeffs;
-		vector<Mat> rvec, tvec;
-		vector<float> reprojError;
+		cv::Mat cameraMatrix, distCoeffs;
+		std::vector<cv::Mat> rvec, tvec;
+		std::vector<float> reprojError;
 
 
 
-		double rms = calibrateCamera(objectPointsArray,
-									 sourcePointsArray,
-									 sourceColorMat.size(),
-									 cameraMatrix,
-									 distCoeffs,
-									 rvec,
-									 tvec,
-									 CV_CALIB_FIX_K4 | CV_CALIB_FIX_K5);
-									
 		
-		if (!(checkRange(cameraMatrix) && checkRange(distCoeffs))) {
+		double rms = calibrateCamera(objectPointsArray,
+			sourcePointsArray,
+			sourceColorMat.size(),
+			cameraMatrix,
+			distCoeffs,
+			rvec,
+			tvec,
+			CV_CALIB_FIX_K4 | CV_CALIB_FIX_K5);
+		std::cout << "camera  " << cameraMatrix << std::endl;
+
+		if (!(cv::checkRange(cameraMatrix) && cv::checkRange(distCoeffs))) {
 			std::cout << "Calibration failed\n";
 		}
 
-		Mat rv(3, 1, CV_64FC1);
-		Mat tv(3, 1, CV_64FC1);
-		solvePnP(objectPointsArray[0], sourcePointsArray[0], cameraMatrix, distCoeffs, rv, tv);
+		cv::Mat rv(3, 1, CV_64FC1);
+		cv::Mat tv(3, 1, CV_64FC1);
+
+		cv::Mat sourceCameraMatrix(cv::Size(3, 3), CV_32F);
+		sourceCameraMatrix.at<float>(0, 0) = colorIntrinsics[0].fx;
+		sourceCameraMatrix.at<float>(1, 1) = colorIntrinsics[0].fy;
+		sourceCameraMatrix.at<float>(0, 2) = colorIntrinsics[0].ppx;
+		sourceCameraMatrix.at<float>(1, 2) = colorIntrinsics[0].ppy;
+
+		solvePnP(objectPointsArray[0], sourcePointsArray[0], sourceCameraMatrix, distCoeffs, rv, tv);
+		for (int i = 0; i < sourcePointsArray[0].size(); i++)
+			std::cout << sourcePointsArray[0][i] << " "; std::cout << std::endl;
+		std::cout << rv << std::endl;
 		std::cout << tv << std::endl;
-		vector<float> depth;
-		for(int i = 0; i < objectPoints.size(); i++)
-			depth.push_back(cv::norm(objectPoints - Point3f(tv)));
+		std::vector<float> depth;
+		for (int i = 0; i < objectPoints.size(); i++)
+			depth.push_back(cv::norm(objectPoints[i] - cv::Point3f(tv)));
 		depths.push_back(depth);
 	}
 	return depths;
 }
+
 
 Transformation SceneRegistration::align(RealsenseGrabber* grabber, Transformation* colorTrans)
 {
 	const cv::Size BOARD_SIZE = cv::Size(9, 6);
 	const int BOARD_NUM = BOARD_SIZE.width * BOARD_SIZE.height;
 	const float GRID_SIZE = 0.028f;
-	const int ITERATION = 10;
+	const int ITERATION = 20;
 	const float INTERVAL = 0.0f;
-	const int corners[4] = {0, 8, 53, 45};
+	const int corners[4] = { 0, 8, 53, 45 };
 
 
 	UINT16** depthImages;
@@ -127,17 +137,15 @@ Transformation SceneRegistration::align(RealsenseGrabber* grabber, Transformatio
 			objectPoints.push_back(cv::Point3f(c * GRID_SIZE, r * GRID_SIZE, 0));
 		}
 	}
-	
-	int cameras = -1;
 
-	std::vector<cv::Point2f> rects;
+	int cameras = -1;
 
 	for (int targetId = 1; cameras == -1 || targetId < cameras; targetId++) {
 		std::vector<std::vector<cv::Point2f> > sourcePointsArray;
 		std::vector<std::vector<cv::Point2f> > targetPointsArray;
-
+		std::vector<cv::Point2f> rects;
 		Timer timer;
-		for (int iter = -1; iter < ITERATION;) {
+		for (int iter = 0; iter < ITERATION;) {
 			cameras = grabber->getRGBD(depthImages, colorImages, depthTrans, depthIntrinsics, colorIntrinsics);
 			RGBQUAD* source = colorImages[0];
 			RGBQUAD* target = colorImages[targetId];
@@ -159,7 +167,8 @@ Transformation SceneRegistration::align(RealsenseGrabber* grabber, Transformatio
 			if (sourcePoints.size() == BOARD_NUM) {
 				if (timer.getTime() > INTERVAL) {
 					color = cv::Scalar(0, 255, 0);
-				} else {
+				}
+				else {
 					color = cv::Scalar(0, 255, 255);
 				}
 			}
@@ -170,42 +179,41 @@ Transformation SceneRegistration::align(RealsenseGrabber* grabber, Transformatio
 				cv::circle(targetColorMat, targetPoints[i], 3, color, 2);
 			}
 			cv::Mat mergeImage;
-
-
-
-			for(int i = 0; i < rects.size(); i+=5) {
-				for(int j = 0; j < 4; j++) {
-					cv::line(sourceColorMat, rects[i + j], rects[i + (j + 1) % 4], Scalar(0, 0, 255));
+			bool valid = (iter != -1 && sourcePoints.size() == BOARD_NUM && targetPoints.size() == BOARD_NUM);
+			cv::Point2f center;
+			for (int i = 0; i < rects.size(); i += 5) {
+				for (int j = 0; j < 4; j++) {
+					cv::line(sourceColorMat, rects[i + j], rects[i + (j + 1) % 4], cv::Scalar(0, 255, 0), 2);
 				}
-				cv::circle(sourceColorMat, rects[i + 4], 3, Scalar(0, 255, 0), 2);
 			}
-
-			for(int i = 0; i < 4; i++) {
-				cv::line(sourceColorMat, sourcePoints[corners[i]], sourcePoints[corners[(i + 1) % 4]], Scalar(255, 0, 0));
+			if (valid) {
+				center = (sourcePoints[corners[0]] +
+					sourcePoints[corners[1]] +
+					sourcePoints[corners[2]] +
+					sourcePoints[corners[3]]) / 4;
+				for (int i = 4; i < rects.size(); i += 5) {
+					if (cv::norm(rects[i] - center) < 20)
+						valid = false;
+				}
+				cv::Scalar color = valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+				for (int i = 0; i < 4; i++) {
+					cv::line(sourceColorMat, sourcePoints[corners[i]], sourcePoints[corners[(i + 1) % 4]], color, 2);
+				}
+				
 			}
-			Point2f center = (sourcePoints[corners[0]] +
-							  sourcePoints[corners[1]] +
-							  sourcePoints[corners[2]] +
-							  sourcePoints[corners[3]]) / 4;
-
 			cv::hconcat(sourceColorMat, targetColorMat, mergeImage);
 			cv::imshow("Calibration", mergeImage);
-			
+
 			char ch = cv::waitKey(1);
 			if (int(ch) != -1) {
 				iter = 0;
 			}
-
-			bool valid = (iter != -1 && sourcePoints.size() == BOARD_NUM && targetPoints.size() == BOARD_NUM);
-			for(int i = 4; i < rects.size(); i+=5) {
-				if (cv::norm(rects[i] - center) < 20)
-					valid = false;
-			}
+			std::cout << iter << std::endl;
 			if (valid) {
 				iter++;
 				sourcePointsArray.push_back(sourcePoints);
 				targetPointsArray.push_back(targetPoints);
-				for(int i = 0; i < 4; i++) {
+				for (int i = 0; i < 4; i++) {
 					rects.push_back(sourcePoints[corners[i]]);
 				}
 				rects.push_back(center);

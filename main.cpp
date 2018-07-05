@@ -7,7 +7,7 @@
 #include <pcl/visualization/cloud_viewer.h>
 #include <windows.h>
 
-//#define CREATE_EXE
+#define CREATE_EXE
 //#define TRANSMISSION
 
 byte* buffer = NULL;
@@ -31,6 +31,10 @@ void registration() {
 void keyboardEventOccurred(const pcl::visualization::KeyboardEvent& event) {
 	if (event.getKeySym() == "r" && event.keyDown()) {
 		registration();
+	}
+	else if (event.getKeySym() == "d" && event.keyDown()) {
+		std::vector<std::vector<float> > depths = SceneRegistration::getDepth(grabber);
+		std::cout << depths.size() << std::endl;
 	}
 }
 
@@ -60,7 +64,11 @@ DWORD WINAPI TransmissionRecvThread(LPVOID pM)
 void start() {
 	omp_set_num_threads(4);
 	omp_set_nested(6);
-	cudaSetDevice(0);
+	int cudaDevices = 0;
+	cudaGetDeviceCount(&cudaDevices);
+	if (cudaDevices >= 2) {
+		cudaSetDevice(1);
+	}
 	
 	grabber = new RealsenseGrabber();
 	cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>());
@@ -111,6 +119,18 @@ void stop() {
 
 int main(int argc, char *argv[]) {
 	start();
+	while (1) {
+		std::vector<std::vector<float> > depths = SceneRegistration::getDepth(grabber);
+		std::cout << depths.size() << std::endl;
+		float sum=  0;
+		for (int j = 0; j < depths[0].size(); j++) {
+			std::cout << depths[0][j] << " ";
+			sum += depths[0][j];
+		}
+		std::cout << sum / depths[0].size() << std::endl;
+		std::cout << std::endl;
+	}
+	system("pause");
 	startViewer();
 	while (!viewer->wasStopped()) {
 		viewer->spinOnce();
